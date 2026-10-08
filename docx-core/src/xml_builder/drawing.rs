@@ -48,4 +48,31 @@ impl<W: Write> XMLBuilder<W> {
     closed_with_child!(align, "wp:align");
     closed!(wrap_none, "wp:wrapNone");
     closed!(wrap_square, "wp:wrapSquare", "wrapText");
+
+    closed!(wps_cnv_sp_pr_tx_box, "wps:cNvSpPr", "txBox");
+    open!(open_wps_sp_pr, "wps:spPr", "bwMode");
+    open!(open_a_ln, "a:ln");
+    open!(open_a_ln_with_w, "a:ln", "w");
+    closed!(a_no_fill, "a:noFill");
+    open!(open_a_solid_fill, "a:solidFill");
+    closed!(a_srgb_color, "a:srgbClr", "val");
+
+    /// `<wps:bodyPr/>` with the defaults Word emits for a plain text box.
+    /// Insets are EMU (Word defaults: 91440 left/right, 45720 top/bottom).
+    pub(crate) fn wps_body_pr(self) -> crate::xml::writer::Result<Self> {
+        self.write(
+            XmlEvent::start_element("wps:bodyPr")
+                .attr("rot", "0")
+                .attr("vert", "horz")
+                .attr("wrap", "square")
+                .attr("lIns", "91440")
+                .attr("tIns", "45720")
+                .attr("rIns", "91440")
+                .attr("bIns", "45720")
+                .attr("anchor", "t")
+                .attr("anchorCtr", "0")
+                .attr("compatLnSpc", "1"),
+        )?
+        .close()
+    }
 }

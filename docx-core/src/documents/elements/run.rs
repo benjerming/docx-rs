@@ -233,7 +233,13 @@ impl Run {
         self
     }
 
-    pub(crate) fn add_drawing(mut self, d: Drawing) -> Run {
+    pub fn add_text_box(mut self, text_box: TextBox) -> Run {
+        self.children
+            .push(RunChild::Drawing(Box::new(Drawing::new().text_box(text_box))));
+        self
+    }
+
+    pub fn add_drawing(mut self, d: Drawing) -> Run {
         self.children.push(RunChild::Drawing(Box::new(d)));
         self
     }

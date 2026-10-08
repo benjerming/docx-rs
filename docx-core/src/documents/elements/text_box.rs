@@ -39,6 +39,10 @@ pub struct TextBox {
     pub dist_b: i32,
     pub dist_l: i32,
     pub dist_r: i32,
+    /// Shape-level fill/outline, written into `wps:spPr`.
+    pub style: TextBoxStyle,
+    /// Name shown for the shape in `wp:docPr`.
+    pub name: String,
 }
 
 impl Default for TextBox {
@@ -67,7 +71,34 @@ impl TextBox {
             dist_b: 0,
             dist_l: 0,
             dist_r: 0,
+            style: TextBoxStyle::default(),
+            name: "TextBox".to_string(),
         }
+    }
+
+    pub fn add_paragraph(mut self, p: Paragraph) -> Self {
+        self.children.push(TextBoxContentChild::Paragraph(Box::new(p)));
+        self
+    }
+
+    pub fn add_table(mut self, t: Table) -> Self {
+        self.children.push(TextBoxContentChild::Table(Box::new(t)));
+        self
+    }
+
+    pub fn style(mut self, style: TextBoxStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
+    pub fn overlapping(mut self) -> Self {
+        self.allow_overlap = true;
+        self
     }
 
     // unit is emu

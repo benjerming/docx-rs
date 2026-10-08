@@ -72,6 +72,101 @@ fn read_position_v<R: Read>(
     }
 }
 
+/// Reads `wps:spPr` children into a [`TextBoxStyle`], consuming events up to
+/// (and including) the closing `spPr` tag. `a:xfrm`/`a:prstGeom` are skipped;
+/// `a:solidFill`/`a:noFill` at the top level become the shape fill, the same
+/// elements inside `a:ln` become the outline.
+fn read_shape_style<R: Read>(r: &mut EventReader<R>) -> Result<TextBoxStyle, ReaderError> {
+    let mut style = TextBoxStyle::default();
+    let mut in_ln = false;
+    let mut ln_width: u32 = 9525; // Word's default outline width (0.75pt)
+    let mut ln_done = false;
+
+    loop {
+        let e = r.next_event();
+        match e {
+            Ok(XmlEvent::StartElement {
+                name, attributes, ..
+            }) => {
+                match AXMLElement::from_str(&name.local_name) {
+                    Ok(AXMLElement::SolidFill) => {
+                        // color is the nested <a:srgbClr val="..."/>
+                        let mut color: Option<String> = None;
+                        loop {
+                            let c = r.next_event();
+                            match c {
+                                Ok(XmlEvent::StartElement {
+                                    name, attributes, ..
+                                }) => {
+                                    if AXMLElement::from_str(&name.local_name)
+                                        == Ok(AXMLElement::SrgbClr)
+                                    {
+                                        color = read(&attributes, "val");
+                                    }
+                                }
+                                Ok(XmlEvent::EndElement { name, .. }) => {
+                                    if AXMLElement::from_str(&name.local_name)
+                                        == Ok(AXMLElement::SolidFill)
+                                    {
+                                        break;
+                                    }
+                                }
+                                Err(_) => return Err(ReaderError::XMLReadError),
+                                _ => {}
+                            }
+                        }
+                        if let Some(color) = color {
+                            if in_ln {
+                                style.line = Some(TextBoxLine::Solid {
+                                    color,
+                                    width_emu: ln_width,
+                                });
+                                ln_done = true;
+                            } else {
+                                style.fill = Some(TextBoxFill::Solid { color });
+                            }
+                        }
+                    }
+                    Ok(AXMLElement::NoFill) => {
+                        if in_ln {
+                            style.line = Some(TextBoxLine::NoLine);
+                            ln_done = true;
+                        } else {
+                            style.fill = Some(TextBoxFill::NoFill);
+                        }
+                    }
+                    Ok(AXMLElement::Ln) => {
+                        if let Some(w) = read(&attributes, "w") {
+                            if let Ok(w) = u32::from_str(&w) {
+                                ln_width = w;
+                            }
+                        }
+                        in_ln = true;
+                    }
+                    _ => {}
+                }
+            }
+            Ok(XmlEvent::EndElement { name, .. }) => {
+                match AXMLElement::from_str(&name.local_name) {
+                    Ok(AXMLElement::Ln) => in_ln = false,
+                    // closing spPr: stop
+                    _ if WpsXMLElement::from_str(&name.local_name)
+                        == Ok(WpsXMLElement::SpProperty) =>
+                    {
+                        if in_ln && !ln_done {
+                            // <a:ln/> without fill info: keep default, emit nothing
+                        }
+                        return Ok(style);
+                    }
+                    _ => {}
+                }
+            }
+            Err(_) => return Err(ReaderError::XMLReadError),
+            _ => {}
+        }
+    }
+}
+
 fn read_textbox_content<R: Read>(
     r: &mut EventReader<R>,
     _attrs: &[OwnedAttribute],
@@ -132,6 +227,9 @@ impl ElementReader for Drawing {
         let mut dist_b = 0;
         let mut dist_l = 0;
         let mut dist_r = 0;
+        let mut extent: (u32, u32) = (from_px(100), from_px(100));
+        let mut doc_pr_name: Option<String> = None;
+        let mut shape_style = TextBoxStyle::default();
 
         loop {
             let e = r.next_event();
@@ -232,6 +330,21 @@ impl ElementReader for Drawing {
                                     position_v = p.1;
                                 }
                             }
+                            WpXMLElement::Extent => {
+                                if let Some(w) = read(&attributes, "cx") {
+                                    if let Ok(w) = u32::from_str(&w) {
+                                        extent.0 = w;
+                                    }
+                                }
+                                if let Some(h) = read(&attributes, "cy") {
+                                    if let Ok(h) = u32::from_str(&h) {
+                                        extent.1 = h;
+                                    }
+                                }
+                            }
+                            WpXMLElement::DocProperty => {
+                                doc_pr_name = read(&attributes, "name");
+                            }
                             _ => {}
                         }
                     }
@@ -259,6 +372,13 @@ impl ElementReader for Drawing {
                     }
 
                     // wps:
+                    if let Ok(WpsXMLElement::SpProperty) =
+                        WpsXMLElement::from_str(&name.local_name)
+                    {
+                        if let Ok(s) = read_shape_style(r) {
+                            shape_style = s;
+                        }
+                    }
                     if let Ok(WpsXMLElement::Txbx) = WpsXMLElement::from_str(&name.local_name) {
                         if let Ok(children) = read_textbox_content(r, &attributes) {
                             let mut text_box = TextBox::new();
@@ -278,6 +398,11 @@ impl ElementReader for Drawing {
                             text_box.relative_from_v = relative_from_v;
                             text_box.position_v = DrawingPosition::Offset(position_v);
                             text_box.position_h = DrawingPosition::Offset(position_h);
+                            text_box.size = extent;
+                            text_box.style = shape_style.clone();
+                            if let Some(n) = &doc_pr_name {
+                                text_box.name = n.clone();
+                            }
                             text_box.children = children;
                             drawing = drawing.text_box(text_box);
                         }
